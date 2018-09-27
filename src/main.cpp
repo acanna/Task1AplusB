@@ -42,17 +42,45 @@ int main()
 
     // TODO 1 По аналогии с заданием Example0EnumDevices узнайте какие есть устройства, и выберите из них какое-нибудь
     // (если есть хоть одна видеокарта - выберите ее, если нету - выбирайте процессор)
+    std::vector<cl_platform_id> platforms(1);
+    OCL_SAFE_CALL(clGetPlatformIDs(1, platforms.data(), nullptr));
+    cl_platform_id platform = platforms[0];
+
+    size_t platformNameSize = 0;
+    OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &platformNameSize));
+    std::vector<unsigned char> platformName(platformNameSize, 0);
+    OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
+    std::cout << "Platform name: " << platformName.data() << std::endl;
+
+    cl_uint devicesCount = 0;
+    OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+    std::vector<cl_device_id> devices(devicesCount);
+    OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
+
+    size_t deviceNameSize = 0;
+    OCL_SAFE_CALL(clGetDeviceInfo(devices[0], CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+    std::vector<unsigned char> deviceName(deviceNameSize, 0);
+    OCL_SAFE_CALL(clGetDeviceInfo(devices[0], CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+    std::cout << "Device name: " << deviceName.data() << std::endl;
 
     // TODO 2 Создайте контекст с выбранным устройством
     // См. документацию https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/ -> OpenCL Runtime -> Contexts -> clCreateContext
     // Не забывайте проверять все возвращаемые коды на успешность (обратите внимание что в данном случае метод возвращает
     // код по переданному аргументом errcode_ret указателю)
     // И хорошо бы сразу добавить в конце clReleaseContext (да, не очень RAII, но это лишь пример)
+    cl_int err_code = 0;
+    cl_context context = clCreateContext(nullptr, devicesCount, devices.data(), nullptr, nullptr, &err_code);
+    OCL_SAFE_CALL(err_code);
+
 
     // TODO 3 Создайте очередь выполняемых команд в рамках выбранного контекста и устройства
     // См. документацию https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/ -> OpenCL Runtime -> Runtime APIs -> Command Queues -> clCreateCommandQueue
     // Убедитесь что в соответствии с документацией вы создали in-order очередь задач
     // И хорошо бы сразу добавить в конце clReleaseQueue
+
+    cl_command_queue queue = clCreateCommandQueue(context, devices[0], 0, &err_code);
+    OCL_SAFE_CALL(err_code);
+
 
     unsigned int n = 1000*1000;
     // Создаем два массива псевдослучайных данных для сложения и массив для будущего хранения результата
@@ -73,6 +101,15 @@ int main()
     // или же через метод Buffer Objects -> clEnqueueWriteBuffer
     // И хорошо бы сразу добавить в конце clReleaseMemObject (аналогично все дальнейшие ресурсы вроде OpenCL под-программы, кернела и т.п. тоже нужно освобождать)
 
+    cl_mem mem_as = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float)*n, as.data(), &err_code);
+    OCL_SAFE_CALL(err_code);
+
+    cl_mem mem_bs = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float)*n, bs.data(), &err_code);
+    OCL_SAFE_CALL(err_code);
+
+    cl_mem mem_cs = clCreateBuffer(context, CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR, sizeof(float)*n, nullptr, &err_code);
+    OCL_SAFE_CALL(err_code);
+
     // TODO 6 Выполните TODO 5 (реализуйте кернел в src/cl/aplusb.cl)
     // затем убедитесь что выходит загрузить его с диска (убедитесь что Working directory выставлена правильно - см. описание задания)
     // напечатав исходники в консоль (if проверяет что удалось считать хоть что-то)
@@ -85,25 +122,60 @@ int main()
         }
         // std::cout << kernel_sources << std::endl;
     }
+    cl_uint nlines = 0;
+    for (size_t i = 0; i < kernel_sources.size(); i++) {
+        if (kernel_sources[i] == '\n') {
+            nlines += 1;
+        }
+    }
+    const char* lines[nlines];
+    size_t lenghts[nlines];
+    std::string s;
+    std::ifstream file("src/cl/aplusb.cl");
+    for (cl_uint i = 0; i < nlines; i++) {
+        getline(file, s);
+        lenghts[i] = s.size();
+        lines[i] = s.c_str();
+
+    }
 
     // TODO 7 Создайте OpenCL-подпрограмму с исходниками кернела
     // см. Runtime APIs -> Program Objects -> clCreateProgramWithSource
     // у string есть метод c_str(), но обратите внимание что передать вам нужно указатель на указатель
-    
+
+    cl_program program = clCreateProgramWithSource(context, nlines, lines, lenghts, &err_code);
+    OCL_SAFE_CALL(err_code);
+
     // TODO 8 Теперь скомпилируйте программу и напечатайте в консоль лог компиляции
     // см. clBuildProgram
 
+    const char* options = "";
+    err_code = clBuildProgram(program, devicesCount, devices.data(), options, 0, 0);
+
     // А так же напечатайте лог компиляции (он будет очень полезен, если в кернеле есть синтаксические ошибки - т.е. когда clBuildProgram вернет CL_BUILD_PROGRAM_FAILURE)
     // см. clGetProgramBuildInfo
-//    size_t log_size = 0;
-//    std::vector<char> log(log_size, 0);
-//    if (log_size > 1) {
-//        std::cout << "Log:" << std::endl;
-//        std::cout << log.data() << std::endl;
-//    }
+    if (err_code == -11) {
+        size_t logSize = 0;
+        OCL_SAFE_CALL(clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, 0, nullptr, &logSize));
+        std::vector<unsigned char> logValue(logSize, 0);
+        OCL_SAFE_CALL(
+                clGetProgramBuildInfo(program, devices[0], CL_PROGRAM_BUILD_LOG, logSize, logValue.data(), nullptr));
+
+        if (logSize > 1) {
+            std::cout << "Log:" << std::endl;
+            std::cout << logValue.data() << std::endl;
+        }
+    }
+
+
+    OCL_SAFE_CALL(err_code);
+
 
     // TODO 9 Создайте OpenCL-kernel в созданной подпрограмме (в одной подпрограмме может быть несколько кернелов, но в данном случае кернел один)
     // см. подходящую функцию в Runtime APIs -> Program Objects -> Kernel Objects
+    const char* kernel_name = "aplusb";
+    cl_kernel kernel = clCreateKernel(program, kernel_name, &err_code);
+    OCL_SAFE_CALL(err_code);
 
     // TODO 10 Выставите все аргументы в кернеле через clSetKernelArg (as_gpu, bs_gpu, cs_gpu и число значений, убедитесь что тип количества элементов такой же в кернеле)
     {
@@ -171,6 +243,14 @@ int main()
 //            throw std::runtime_error("CPU and GPU results differ!");
 //        }
 //    }
+
+    OCL_SAFE_CALL(clReleaseContext(context));
+    OCL_SAFE_CALL(clReleaseCommandQueue(queue));
+    OCL_SAFE_CALL(clReleaseMemObject(mem_as));
+    OCL_SAFE_CALL(clReleaseMemObject(mem_bs));
+    OCL_SAFE_CALL(clReleaseMemObject(mem_cs));
+    OCL_SAFE_CALL(clReleaseProgram(program));
+    OCL_SAFE_CALL(clReleaseKernel(kernel));
 
     return 0;
 }
